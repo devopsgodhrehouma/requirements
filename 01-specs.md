@@ -39,7 +39,6 @@ L'objectif est de **sécuriser l'accès aux cours** selon l’abonnement ou les 
 | **Type d’utilisateur** | **Accès** |
 |-----------------|------------|
 | **`STANDARD_USER`** | Peut accéder uniquement aux cours qu’il a achetés. |
-| **`MONTHLY_USER`** | Accès aux cours du mois en cours. |
 | **`PREMIUM_USER`** | Accès illimité à tous les cours. |
 
 ### **🔗 2. Cas d’Utilisation**
@@ -125,9 +124,160 @@ Si un utilisateur tente d’accéder à une route `/docs/ansible/*`, Docusaurus 
 | Un utilisateur non premium essaie d’accéder à un cours non acheté. | Redirigé vers `/subscribe`. | ✅ OK |
 | Un utilisateur premium essaie d’accéder à n’importe quel cours. | Accès autorisé. | ✅ OK |
 
+
+
+
+
 ---
 
-## **📌 8. Conclusion et Étapes Suivantes**
+### **📌 8. Exemple Gestion de l’Accès aux Cours Achetables à Vie**  
+
+✅ Lorsqu’un utilisateur **achète un cours à vie**, il doit voir **tous les cours qu’il a achetés** sur **sa page personnelle**.  
+✅ L’API backend doit exposer un **endpoint** qui retourne la **liste des cours achetés par l’utilisateur**.  
+✅ Docusaurus doit appeler cet endpoint pour afficher **uniquement les cours disponibles pour cet utilisateur**.  
+
+---
+
+## **🔑 Endpoints Concernés**
+| **Méthode** | **Route** | **Description** | **Protection** |
+|------------|---------|----------------------|--------------|
+| `GET` | `/api/auth/me` | Retourne les infos utilisateur | **JWT obligatoire** |
+| `GET` | `/api/user/courses` | Retourne la liste des cours achetés par l’utilisateur | **JWT obligatoire** |
+
+---
+
+## **📌 8.1. Explication du Endpoint `/api/user/courses`**
+### ✅ **Objectif**
+Ce endpoint retourne **uniquement les cours que l’utilisateur a achetés à vie**.  
+
+### ✅ **Données retournées (Exemple de Réponse)**
+Lorsque **Docusaurus** appelle `/api/user/courses`, le backend retourne une **liste des cours achetés** :
+```json
+{
+  "courses": [
+    {
+      "id": 1,
+      "title": "Ansible pour les Débutants",
+      "category": "Ansible",
+      "access": "lifetime"
+    },
+    {
+      "id": 2,
+      "title": "Docker et Kubernetes",
+      "category": "Docker",
+      "access": "lifetime"
+    }
+  ]
+}
+```
+👉 **Seuls les cours achetés apparaissent ici.**  
+👉 L’utilisateur **ne verra pas** les cours qu’il n’a pas achetés.  
+
+---
+
+## **📌 8.2. Intégration Frontend Docusaurus**
+Docusaurus doit appeler `/api/user/courses` et afficher **seulement les cours achetés** dans **sa page personnelle**.  
+
+Dans **`src/pages/my-courses.js`** :
+```jsx
+import React, { useEffect, useState } from 'react';
+
+export default function MyCourses() {
+    const [courses, setCourses] = useState([]);
+
+    useEffect(() => {
+        fetch('/api/user/courses', {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        })
+        .then(res => res.json())
+        .then(data => setCourses(data.courses));
+    }, []);
+
+    return (
+        <div>
+            <h1>Mes Cours</h1>
+            {courses.length === 0 ? (
+                <p>Vous n'avez pas encore acheté de cours.</p>
+            ) : (
+                <ul>
+                    {courses.map((course) => (
+                        <li key={course.id}>
+                            <a href={`/docs/category/${course.category}`}>{course.title}</a>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+```
+👉 **Chaque cours acheté est affiché avec un lien direct vers sa documentation.**  
+👉 **Si l’utilisateur n’a aucun cours, un message est affiché.**  
+
+---
+
+## **📌 8.3. Sécurisation dans Docusaurus**
+**Si un utilisateur tente d’accéder à `/docs/category/ansible` sans avoir acheté le cours :**  
+1️⃣ **Docusaurus interroge `/api/user/courses`** pour voir s’il a accès.  
+2️⃣ **Si le cours n’est pas dans sa liste, redirection vers `/subscribe`**.  
+
+Dans **`protectedRoutes.js`** :
+```js
+import { useEffect, useState } from 'react';
+import { useHistory } from '@docusaurus/router';
+
+export default function ProtectedRoutes({ course }) {
+    const history = useHistory();
+    const [authorized, setAuthorized] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/user/courses', {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        })
+        .then(res => res.json())
+        .then(data => {
+            const hasAccess = data.courses.some(c => c.category === course);
+            if (!hasAccess) {
+                history.push('/subscribe'); // Rediriger si l’utilisateur n’a pas accès
+            } else {
+                setAuthorized(true);
+            }
+        });
+    }, []);
+
+    return authorized ? null : <p>Chargement...</p>;
+}
+```
+👉 **Ce composant protège les pages `/docs/*`.**  
+👉 **Si l’utilisateur n’a pas acheté le cours, il est redirigé vers `/subscribe`.**  
+
+---
+
+## **📌 8.4. Plan de Validation**
+| **Cas de Test** | **Attendu** |
+|---------------|------------|
+| L’utilisateur appelle `/api/user/courses` sans JWT | **Erreur 401 Unauthorized** |
+| L’utilisateur appelle `/api/user/courses` avec un JWT valide | **Liste des cours achetés** |
+| L’utilisateur accède à `/docs/category/ansible` sans achat | **Redirection `/subscribe`** |
+| L’utilisateur accède à `/docs/category/ansible` après achat | **Accès autorisé** |
+
+---
+
+## **📌 8.5. Résumé et Étapes Suivantes**
+✅ **Le backend expose `/api/user/courses` pour retourner les cours achetés.**  
+✅ **Docusaurus affiche uniquement les cours achetés sur `/my-courses`.**  
+✅ **Les routes `/docs/category/*` sont protégées et redirigent vers `/subscribe` si l’utilisateur n’a pas accès.**  
+
+🔥 **Une fois cette API en place, je pourrai finaliser l’intégration Docusaurus !** 🚀  
+💬 **Dis-moi si tu veux ajuster encore quelque chose !**
+
+
+
+
+
+---
+
+## **📌 9. Conclusion et Étapes Suivantes**
 🔹 **Le frontend (Docusaurus) appelle le backend pour gérer l'accès aux cours.**  
 🔹 **Le backend protège les endpoints et vérifie les abonnements.**  
 🔹 **Docusaurus redirige vers `/subscribe` si l’accès est refusé.**  
