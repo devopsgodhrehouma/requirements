@@ -216,6 +216,209 @@ export default function MyCourses() {
 
 ---
 
+# 10 - IMPORTANT À LIRE (POUR MOHSEN)
+
+### 📜 **Sécurisation des Cours dans Docusaurus avec TypeScript et Spring Boot**  
+
+Dans ce document, nous allons détailler **comment protéger l’accès aux cours** dans **Docusaurus (TypeScript)** en utilisant un **backend Spring Boot** pour gérer l’authentification et les autorisations.
+
+---
+
+## **📌 1. Objectif**
+Nous devons implémenter un **système de protection des cours** pour :  
+1️⃣ Vérifier si l’utilisateur **a acheté un cours** avant d’y accéder.  
+2️⃣ **Rediriger l’utilisateur** vers la page d’abonnement (`/subscribe`) s’il n’a pas accès.  
+3️⃣ **Afficher dynamiquement** les cours achetés sur la page **"Mes Cours"**.  
+
+---
+
+## **📌 2. Fonctionnement Général**
+| **Fonctionnalité** | **Docusaurus (Frontend - TypeScript)** | **Spring Boot (Backend)** |
+|----------------|----------------|----------------|
+| **Afficher les cours achetés sur la page utilisateur** | ✅ Appelle `/api/user/courses` et affiche les résultats | ✅ Retourne la liste des cours achetés |
+| **Bloquer l’accès à un cours non acheté** | ✅ Vérifie l’accès et redirige vers `/subscribe` | ✅ Vérifie l’achat dans la base de données |
+| **Gérer l’authentification (JWT)** | ✅ Stocke le token JWT et l’envoie avec chaque requête | ✅ Vérifie le JWT et renvoie les données utilisateur |
+| **Gérer les paiements Stripe** | ✅ Redirige l’utilisateur vers Stripe via `/api/payment/checkout/{courseId}` | ✅ Gère la validation et active l’accès après paiement |
+
+---
+
+## **📌 3. Intégration Frontend dans Docusaurus (TypeScript)**
+### ✅ **1. Création d’un Composant de Protection des Routes (`ProtectedRoutes.tsx`)**
+Ce composant **vérifie l’accès** et redirige si nécessaire.
+
+📂 **Fichier :** `src/components/ProtectedRoutes.tsx`
+```tsx
+import React, { useEffect, useState } from 'react';
+import { useHistory } from '@docusaurus/router';
+
+interface ProtectedRoutesProps {
+  course: string;
+}
+
+const ProtectedRoutes: React.FC<ProtectedRoutesProps> = ({ course }) => {
+  const history = useHistory();
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        history.push('/login');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/user/courses', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+
+        if (!response.ok) {
+          history.push('/subscribe');
+          return;
+        }
+
+        const data = await response.json();
+        const hasAccess = data.courses.some((c: { category: string }) => c.category === course);
+        setAuthorized(hasAccess);
+
+        if (!hasAccess) {
+          history.push('/subscribe');
+        }
+      } catch (error) {
+        console.error("Erreur lors de la récupération des cours", error);
+        history.push('/subscribe');
+      }
+    };
+
+    fetchCourses();
+  }, [course, history]);
+
+  return authorized === null ? <p>Chargement...</p> : null;
+};
+
+export default ProtectedRoutes;
+```
+👉 **Ce composant vérifie les droits d’accès et redirige vers `/subscribe` si l’utilisateur n’a pas acheté le cours.**  
+
+---
+
+### ✅ **2. Utilisation de `ProtectedRoutes` dans une Page de Cours**
+Pour **protéger l’accès aux cours**, nous devons **intégrer** ce composant dans les pages de documentation.
+
+📂 **Fichier :** `src/pages/docs/category/ansible.tsx`
+```tsx
+import React from 'react';
+import ProtectedRoutes from '@site/src/components/ProtectedRoutes';
+
+const AnsibleDocs: React.FC = () => {
+  return (
+    <div>
+      <ProtectedRoutes course="ansible" />
+      <h1>Bienvenue dans le cours Ansible</h1>
+      <p>Contenu du cours ici...</p>
+    </div>
+  );
+};
+
+export default AnsibleDocs;
+```
+👉 **Si l’utilisateur n’a pas acheté le cours "Ansible", il sera redirigé vers `/subscribe`.**  
+
+---
+
+### ✅ **3. Affichage des Cours Achetés dans la Page "Mes Cours"**
+Nous devons afficher dynamiquement **les cours achetés** sur la page `/my-courses`.
+
+📂 **Fichier :** `src/pages/my-courses.tsx`
+```tsx
+import React, { useEffect, useState } from 'react';
+
+interface Course {
+  id: number;
+  title: string;
+  category: string;
+  access: string;
+}
+
+const MyCourses: React.FC = () => {
+  const [courses, setCourses] = useState<Course[]>([]);
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const response = await fetch('/api/user/courses', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setCourses(data.courses);
+      }
+    };
+
+    fetchCourses();
+  }, []);
+
+  return (
+    <div>
+      <h1>Mes Cours</h1>
+      {courses.length === 0 ? (
+        <p>Vous n'avez pas encore acheté de cours.</p>
+      ) : (
+        <ul>
+          {courses.map((course) => (
+            <li key={course.id}>
+              <a href={`/docs/category/${course.category}`}>{course.title}</a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+export default MyCourses;
+```
+👉 **Cette page affiche uniquement les cours achetés.**
+
+---
+
+## **📌 4. Implémentation du Backend Spring Boot**
+Le backend doit fournir **une API REST sécurisée** qui retourne les cours achetés.
+
+📂 **Fichier :** `UserCourseController.java`
+```java
+@RestController
+@RequestMapping("/api/user")
+public class UserCourseController {
+
+    @Autowired
+    private UserService userService;
+
+    @GetMapping("/courses")
+    public ResponseEntity<?> getUserCourses(@RequestHeader("Authorization") String token) {
+        User user = userService.getUserFromToken(token);
+        List<Course> courses = userService.getPurchasedCourses(user.getId());
+
+        return ResponseEntity.ok(Map.of("courses", courses));
+    }
+}
+```
+👉 **Le backend vérifie l’utilisateur via son token et retourne ses cours achetés.**  
+
+---
+
+## **📌 5. Résumé et Étapes Suivantes**
+✅ **Docusaurus (TypeScript) protège l’accès aux cours avec `ProtectedRoutes`.**  
+✅ **Spring Boot fournit `/api/user/courses` pour récupérer les cours achetés.**  
+✅ **Si un utilisateur non connecté ou non autorisé tente d’accéder à un cours, il est redirigé vers `/subscribe`.**  
+✅ **La page `/my-courses` affiche dynamiquement les cours achetés.**  
+
+🔥 **Une fois que ton développeur backend implémente `/api/user/courses`, tu peux finaliser l’intégration Docusaurus !** 🚀  
+
+
 ## **📌 8.3. Sécurisation dans Docusaurus**
 **Si un utilisateur tente d’accéder à `/docs/category/ansible` sans avoir acheté le cours :**  
 1️⃣ **Docusaurus interroge `/api/user/courses`** pour voir s’il a accès.  
